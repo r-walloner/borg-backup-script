@@ -1,0 +1,95 @@
+#!/bin/sh
+# Shell script for backing up the system to a remote server using borg backup
+
+BACKUP_HOST="zentrallager.walloner.net"            # Hostname of the backup server
+BACKUP_PORT="23"                                   # SSH port of the backup server
+BACKUP_USER="u370415-sub1"                         # Username for SSH login
+BACKUP_REPO="/home/repo"                           # Borg repository on the backup server
+BACKUP_LOG_DIR="/home/logs"                        # Directory for log files on the backup server
+PASSPHRASE_OP_ACCOUNT="WSCCQR6KNZG2VNH2VTNPLULIYI" # 1Password account for the passphrase
+PASSPHRASE_OP_ITEM="sne6wmqno6jb3v7pts2xlu6xxm"    # 1Password item for the passphrase
+PASSPHRASE_OP_LABEL="Repo Passphrase (BorgBackup)" # 1Password label for the passphrase
+
+# Helper for logging
+info() {
+    printf "\n%s: %s\n\n" "$(date)" "$*" >&1
+}
+
+create_backup() {
+    info "Starting backup"
+
+    export BORG_REPO="ssh://$BACKUP_USER@$BACKUP_HOST:$BACKUP_PORT$BACKUP_REPO"
+    export BORG_PASSPHRASE=$(op --account "$PASSPHRASE_OP_ACCOUNT" item get "$PASSPHRASE_OP_ITEM" --fields "label=$PASSPHRASE_OP_LABEL")
+    
+
+    sudo -E borg create \
+        --show-rc \
+        --progress \
+        --stats \
+        --compression lz4 \
+        --exclude-caches \
+        \
+        "::$(hostname)_$(date +%Y-%m-%d_%H-%M)" \
+        \
+        /etc \
+        /home \
+        /opt \
+        /root \
+        /srv \
+        /usr \
+        /var
+
+    BACKUP_EXIT_CODE=$?
+
+    info "Pruning repository"
+
+    borg prune \
+        --show-rc \
+        --list \
+        --glob-archives '{hostname}_*' \
+        --keep-within 7d \
+        --keep-daily 30 \
+        --keep-monthly 12
+
+    PRUNE_EXIT_CODE=$?
+
+    info "Compacting repository"
+
+    borg compact \
+        --show-rc
+
+    COMPACT_EXIT_CODE=$?
+
+    borg info
+
+    # Use highest exit code as global exit code
+    EXIT_CODE=$((BACKUP_EXIT_CODE > PRUNE_EXIT_CODE ? BACKUP_EXIT_CODE : PRUNE_EXIT_CODE))
+    EXIT_CODE=$((EXIT_CODE > COMPACT_EXIT_CODE ? EXIT_CODE : COMPACT_EXIT_CODE))
+
+    if [ ${EXIT_CODE} -eq 0 ]; then
+        info "Backup, Prune, and Compact finished successfully"
+    elif [ ${EXIT_CODE} -eq 1 ]; then
+        info "Backup, Prune, and/or Compact finished with warnings"
+    else
+        info "Backup, Prune, and/or Compact finished with errors"
+    fi
+}
+
+# Trap interrupts
+trap "info 'Backup interrupted'; exit 2" INT TERM
+
+# Create log file
+LOG_DIR="/home/$(whoami)/log/borg-backup"
+LOG_FILE="backup-$(date +%Y-%m-%d_%H-%M).log"
+mkdir --parents "$LOG_DIR"
+touch "$LOG_DIR/$LOG_FILE"
+
+# Run backup
+create_backup 2>&1 | tee "$LOG_DIR/$LOG_FILE"
+
+# Upload log
+info "Uploading log"
+scp -P "$BACKUP_PORT" "$LOG_DIR/$LOG_FILE" "$BACKUP_USER@$BACKUP_HOST:$BACKUP_LOG_DIR/" || info "Failed to upload log"
+
+info "Done"
+exit $EXIT_CODE
