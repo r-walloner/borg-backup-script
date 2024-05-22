@@ -60,8 +60,6 @@ create_backup() {
 
     COMPACT_EXIT_CODE=$?
 
-    borg info
-
     # Use highest exit code as global exit code
     EXIT_CODE=$((BACKUP_EXIT_CODE > PRUNE_EXIT_CODE ? BACKUP_EXIT_CODE : PRUNE_EXIT_CODE))
     EXIT_CODE=$((EXIT_CODE > COMPACT_EXIT_CODE ? EXIT_CODE : COMPACT_EXIT_CODE))
