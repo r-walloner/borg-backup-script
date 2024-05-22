@@ -28,6 +28,10 @@ create_backup() {
         --stats \
         --compression lz4 \
         --exclude-caches \
+        --exclude '/home/*/.cache' \
+        --exclude '/home/*/.local/share/Trash' \
+        --exclude '/home/*/.thumbnails' \
+        --exclude '/home/*/Downloads' \
         \
         "::$(hostname)_$(date +%Y-%m-%d_%H-%M)" \
         \
